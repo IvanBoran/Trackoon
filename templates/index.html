@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Trackoon: Interactive 3D Network Graph</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.1.0-beta.1/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.1.0-beta.1/js/select2.min.js"></script>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: row;
+            font-family: Arial, sans-serif;
+        }
+
+        #graph-container {
+            width: 75%;
+            height: 100%;
+            position: relative;
+        }
+
+        #loading-icon {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+        }
+
+        #controls {
+            width: 25%;
+            height: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            background-color: #f8f8f8;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        #graph {
+            width: 100%;
+            height: 100%;
+        }
+
+        .input-group {
+            margin-bottom: 10px;
+        }
+
+        .node-button,
+        .layout-button {
+            margin-bottom: 5px;
+            padding: 10px;
+            background-color: #ddd;
+            border: 1px solid #ccc;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        #logo {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 50px;
+            height: 50px;
+        }
+
+        #legend {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #ffffff;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        #legend h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+
+        .legend-section {
+            margin-bottom: 10px;
+        }
+
+        .legend-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .legend-color-box {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            vertical-align: middle;
+            border: 1px solid #ccc;
+        }
+
+        .legend-color-box.blue {
+            background-color: blue;
+        }
+
+        .legend-color-box.red {
+            background-color: red;
+        }
+
+        .legend-color-box.transition {
+            background: linear-gradient(to right, blue, green, yellow, orange, red);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="graph-container">
+        <div id="graph"></div>
+        <div id="loading-icon">
+            <img src="{{ url_for('static', filename='loading.gif') }}" alt="Loading...">
+        </div>
+        <img id="logo" src="{{ url_for('static', filename='logo.png') }}" alt="Trackoon Logo">
+    </div>
+    <div id="controls">
+        <h2>Trackoon Controls</h2>
+        <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+            <div class="input-group">
+                <label for="file">Upload CSV:</label>
+                <input type="file" id="file" name="file">
+            </div>
+            <div class="input-group">
+                <button type="submit">Upload</button>
+            </div>
+        </form>
+        <div class="input-group">
+            <label for="start-date">Start Date:</label>
+            <input type="datetime-local" id="start-date" name="start-date">
+        </div>
+        <div class="input-group">
+            <label for="end-date">End Date:</label>
+            <input type="datetime-local" id="end-date" name="end-date">
+        </div>
+        <div class="input-group">
+            <button onclick="filterByDate()">Filter</button>
+        </div>
+        <div class="input-group">
+            <label for="node-select">Select Node:</label>
+            <select id="node-select" style="width: 100%"></select>
+        </div>
+        <button class="node-button" onclick="highlightSelectedNode()">Highlight Selected Node</button>
+        <button class="node-button" onclick="resetGraph()">Show All Nodes</button>
+        <div class="input-group">
+            <label for="user-select">Filter by User:</label>
+            <input type="text" id="user-select" name="user-select">
+        </div>
+        <button class="node-button" onclick="filterByUser()">Filter by User</button>
+        <div class="input-group">
+            <h3>Layout Options:</h3>
+            <button class="layout-button" onclick="applyLayout('grid')">Grid Layout</button>
+            <button class="layout-button" onclick="applyLayout('circular')">Circular Layout</button>
+            <button class="layout-button" onclick="applyLayout('random')">Random Layout</button>
+            <button class="layout-button" onclick="applyLayout('smart')">Smart Layout</button>
+        </div>
+        <div id="legend">
+            <h3>Legend</h3>
+            <div class="legend-section">
+                <strong>X Axis:</strong> Third octet of the IP address
+            </div>
+            <div class="legend-section">
+                <strong>Y Axis:</strong> Fourth octet of the IP address
+            </div>
+            <div class="legend-section">
+                <strong>Z Axis:</strong> Number of edges connected to the node
+            </div>
+            <div class="legend-section">
+                <span class="legend-color-box blue"></span>
+                <strong>Blue:</strong> Nodes with both hostname and IP
+            </div>
+            <div class="legend-section">
+                <span class="legend-color-box red"></span>
+                <strong>Red:</strong> Nodes without hostname
+            </div>
+            <div class="legend-section">
+                <span class="legend-color-box transition"></span>
+                <strong>Edges:</strong> Gradient from few to many connections
+            </div>
+        </div>
+    </div>
+    <script>
+        let data = {};
+        let filters = { startDate: null, endDate: null, user: null, highlightedNode: null };
+
+        function fetchNodeList() {
+            fetch('/nodes')
+                .then(response => response.json())
+                .then(nodeList => {
+                    populateNodeDropdown(nodeList);
+                })
+                .catch(error => {
+                    console.error('Error fetching node list:', error);
+                });
+        }
+
+        function populateNodeDropdown(nodeList) {
+            const nodeSelect = $('#node-select');
+            nodeSelect.empty(); // Clear existing options
+            if (Array.isArray(nodeList)) {
+                nodeList.forEach(node => {
+                    const option = new Option(node.label, node.id, false, false);
+                    nodeSelect.append(option);
+                });
+                nodeSelect.trigger('change');
+            } else {
+                console.error("Invalid node list data:", nodeList);
+            }
+        }
+
+        $('#node-select').select2({
+            placeholder: 'Select a node',
+            allowClear: true
+        });
+
+        function renderGraph(graphData) {
+            if (!graphData || !graphData.nodes || !graphData.edges) {
+                console.error("Invalid graph data:", graphData);
+                return;
+            }
+
+            const node_x = [];
+            const node_y = [];
+            const node_z = [];
+            const node_text = [];
+            const node_size = [];
+            const node_color = [];
+
+            const edge_x = [];
+            const edge_y = [];
+            const edge_z = [];
+            const edge_color = [];
+
+            graphData.nodes.forEach(node => {
+                node_x.push(node.x);
+                node_y.push(node.y);
+                node_z.push(node.z);
+                node_text.push(node.label);
+                node_size.push(node.size);
+                node_color.push(node.color);
+            });
+
+            graphData.edges.forEach(edge => {
+                const node0 = graphData.nodes.find(node => node.id === edge.source);
+                const node1 = graphData.nodes.find(node => node.id === edge.target);
+                if (node0 && node1) {
+                    edge_x.push(node0.x, node1.x, null);
+                    edge_y.push(node0.y, node1.y, null);
+                    edge_z.push(node0.z, node1.z, null);
+                    edge_color.push(edge.color, edge.color, 'rgba(0,0,0,0)'); // Color the edge and make the separator transparent
+                } else {
+                    console.warn("Edge references missing node:", edge);
+                }
+            });
+
+            const node_trace = {
+                x: node_x,
+                y: node_y,
+                z: node_z,
+                mode: 'markers+text',
+                marker: {
+                    size: node_size,
+                    color: node_color,
+                },
+                text: node_text,
+                type: 'scatter3d',
+                hoverinfo: 'text'
+            };
+
+            const edge_trace = {
+                x: edge_x,
+                y: edge_y,
+                z: edge_z,
+                mode: 'lines',
+                line: {
+                    width: 2,  // Thinner line width
+                    color: edge_color,
+                },
+                type: 'scatter3d',
+                hoverinfo: 'none'
+            };
+
+            const layout = {
+                margin: { l: 0, r: 0, b: 0, t: 0 },
+                scene: { 
+                    aspectmode: "cube"
+                },
+                showlegend: false
+            };
+
+            Plotly.newPlot('graph', [edge_trace, node_trace], layout);
+        }
+
+        function applyLayout(layoutType) {
+            if (!data || !data.nodes) {
+                console.error("No graph data available for layout.");
+                return;
+            }
+
+            fetch('/layout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ layout: layoutType })
+            }).then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error); });
+                }
+                return response.json();
+            }).then(updatedData => {
+                data = updatedData;
+                renderGraph(updatedData);
+            }).catch(error => {
+                console.error('Error during layout update:', error);
+                alert(`An error occurred while updating the layout: ${error.message}`);
+            });
+        }
+
+        function highlightSelectedNode() {
+            const nodeId = $('#node-select').val();
+            if (nodeId) {
+                filters.highlightedNode = nodeId;
+                highlightNode(nodeId);
+            } else {
+                alert("Please select a node to highlight.");
+            }
+        }
+
+        function highlightNode(nodeId) {
+            document.getElementById('loading-icon').style.display = 'block';
+            fetch('/highlight', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ node_id: nodeId })
+            }).then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error); });
+                }
+                return response.json();
+            }).then(highlightedData => {
+                data = highlightedData;
+                renderGraph(highlightedData);
+                document.getElementById('loading-icon').style.display = 'none';
+            }).catch(error => {
+                console.error('Error during node highlighting:', error);
+                alert(`An error occurred while highlighting the node: ${error.message}`);
+                document.getElementById('loading-icon').style.display = 'none';
+            });
+        }
+
+        function resetGraph() {
+            fetch('/full_graph')
+                .then(response => response.json())
+                .then(fullGraphData => {
+                    data = fullGraphData;
+                    renderGraph(fullGraphData);
+                })
+                .catch(error => {
+                    console.error('Error fetching full graph data:', error);
+                });
+        }
+
+        function filterByDate() {
+            const startDateValue = document.getElementById('start-date').value;
+            const endDateValue = document.getElementById('end-date').value;
+
+            if (!startDateValue || !endDateValue) {
+                alert("Please select both start and end dates.");
+                return;
+            }
+
+            filters.startDate = startDateValue;
+            filters.endDate = endDateValue;
+            filterDataByDate();
+        }
+
+        function filterDataByDate() {
+            document.getElementById('loading-icon').style.display = 'block';
+            fetch('/filter', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ start_date: filters.startDate, end_date: filters.endDate })
+            }).then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error); });
+                }
+                return response.json();
+            }).then(filteredData => {
+                data = filteredData;
+                renderGraph(filteredData);
+                document.getElementById('loading-icon').style.display = 'none';
+            }).catch(error => {
+                console.error('Error during data filtering:', error);
+                alert(`An error occurred while filtering the data: ${error.message}`);
+                document.getElementById('loading-icon').style.display = 'none';
+            });
+        }
+
+        function filterByUser() {
+            const userValue = document.getElementById('user-select').value;
+
+            if (!userValue) {
+                alert("Please enter a user to filter.");
+                return;
+            }
+
+            filters.user = userValue;
+            filterDataByUser();
+        }
+
+        function filterDataByUser() {
+            document.getElementById('loading-icon').style.display = 'block';
+            fetch('/filter_by_user', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ user: filters.user })
+            }).then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error); });
+                }
+                return response.json();
+            }).then(filteredData => {
+                data = filteredData;
+                renderGraph(filteredData);
+                document.getElementById('loading-icon').style.display = 'none';
+            }).catch(error => {
+                console.error('Error during user filtering:', error);
+                alert(`An error occurred while filtering by user: ${error.message}`);
+                document.getElementById('loading-icon').style.display = 'none';
+            });
+        }
+
+        document.getElementById('upload-form').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            document.getElementById('loading-icon').style.display = 'block';
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            }).then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { throw new Error(err.error); });
+                }
+                return response.json();
+            }).then(receivedData => {
+                if (receivedData && receivedData.nodes && receivedData.edges) {
+                    data = receivedData;
+                    renderGraph(receivedData);
+                    fetchNodeList();  // Fetch the node list after uploading
+                } else {
+                    console.error("Invalid data structure:", receivedData);
+                }
+                document.getElementById('loading-icon').style.display = 'none';
+            }).catch(error => {
+                console.error('Error during file upload:', error);
+                alert(`An error occurred while uploading the file: ${error.message}`);
+                document.getElementById('loading-icon').style.display = 'none';
+            });
+        });
+
+        $(document).ready(function () {
+            fetchNodeList();
+        });
+    </script>
+</body>
+
+</html>
